@@ -1,109 +1,148 @@
 (() => {
-  "use strict";
+  'use strict';
 
-  const PREFIX = "dooory.website-blocker.domain.";
+  const PREFIX = 'dooory.website-blocker.domain.';
 
-  function normalizeDomain(input) {
+  const normalizeDomain = function normalizeDomain(input) {
     const value = input.trim();
-    if (!value || /[\s*\\]/u.test(value)) throw new Error("Enter a domain or an HTTP(S) URL, without wildcards or spaces.");
+    if (!value || /[\s*\\]/u.test(value)) {
+      throw new Error('Enter a domain or an HTTP(S) URL, without wildcards or spaces.');
+    }
+
     let url;
     try {
       url = new URL(/^https?:\/\//iu.test(value) ? value : `https://${value}`);
     } catch {
-      throw new Error("Enter a valid domain or HTTP(S) URL.");
+      throw new Error('Enter a valid domain or HTTP(S) URL.');
     }
-    const domain = url.hostname.replace(/\.$/u, "").toLowerCase();
-    if (!/^https?:$/u.test(url.protocol) || url.username || url.password || value.includes("://") && !/^https?:\/\//iu.test(value)) {
-      throw new Error("Only domains and HTTP(S) URLs are supported; leave out usernames and passwords.");
+
+    const { hostname, protocol, username, password } = url;
+    const domain = hostname.replace(/\.$/u, '').toLowerCase();
+    if (
+      !/^https?:$/u.test(protocol)
+      || username
+      || password
+      || (value.includes('://') && !/^https?:\/\//iu.test(value))
+    ) {
+      throw new Error('Only domains and HTTP(S) URLs are supported; leave out usernames and passwords.');
     }
-    if (!domain || domain.length > 253 || !domain.startsWith("[") && domain.split(".").some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))) {
-      throw new Error("Enter a valid hostname.");
+
+    if (
+      !domain
+      || domain.length > 253
+      || (!domain.startsWith('[') && domain.split('.').some((label) => (
+        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)
+      )))
+    ) {
+      throw new Error('Enter a valid hostname.');
     }
+
     return domain;
-  }
+  };
 
-  function matchingDomain(address, domains) {
+  const matchingDomain = function matchingDomain(address, blockedDomains) {
     try {
-      const url = new URL(address);
-      if (!/^https?:$/u.test(url.protocol)) return;
-      const hostname = url.hostname.replace(/\.$/u, "").toLowerCase();
-      return [...domains].find(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+      const { hostname: rawHostname, protocol } = new URL(address);
+      if (!/^https?:$/u.test(protocol)) {
+        return undefined;
+      }
+
+      const hostname = rawHostname.replace(/\.$/u, '').toLowerCase();
+      return [...blockedDomains].find((domain) => (
+        hostname === domain || hostname.endsWith(`.${domain}`)
+      ));
     } catch {
-      return;
+      return undefined;
     }
-  }
+  };
 
-  function blockedPage(domain) {
-    return chrome.runtime.getURL("website-blocker-blocked.html") + "?domain=" + encodeURIComponent(domain);
-  }
+  const blockedPage = function blockedPage(domain) {
+    const url = chrome.runtime.getURL('website-blocker-blocked.html');
+    return `${url}?domain=${encodeURIComponent(domain)}`;
+  };
 
-  if (typeof module !== "undefined" && module.exports) {
+  if (typeof module !== 'undefined' && module.exports) {
     module.exports = { normalizeDomain, matchingDomain, blockedPage };
     return;
   }
-  if (location.pathname === "/website-blocker-blocked.html") {
-    document.getElementById("blocked-domain").textContent = new URLSearchParams(location.search).get("domain") || "This website";
+
+  if (location.pathname === '/website-blocker-blocked.html') {
+    document.getElementById('blocked-domain').textContent = new URLSearchParams(location.search)
+      .get('domain') || 'This website';
     return;
   }
-  if (window.doooryWebsiteBlocker) return;
+
+  if (window.doooryWebsiteBlocker) {
+    return;
+  }
+
   window.doooryWebsiteBlocker = true;
 
   // Callback APIs also work in Vivaldi UI contexts that do not return promises.
-  function call(owner, method, ...args) {
+  const call = function call(owner, method, ...args) {
     return new Promise((resolve, reject) => {
-      owner[method](...args, result => {
-        const error = chrome.runtime.lastError;
-        if (error) reject(new Error(error.message));
-        else resolve(result);
+      owner[method](...args, (result) => {
+        const { lastError } = chrome.runtime;
+        if (lastError) {
+          reject(new Error(lastError.message));
+        } else {
+          resolve(result);
+        }
       });
     });
-  }
+  };
 
   const domains = new Set();
   const redirecting = new Set();
   const pendingBlocks = new Map();
+
   let windowId;
   let ready = false;
-  let startupError = "";
+  let startupError = '';
+
   const ownWindowId = () => window.vivaldiWindowId ?? windowId;
-  const dialog = document.createElement("dialog");
-  dialog.id = "dooory-website-blocker-dialog";
-  dialog.setAttribute("aria-labelledby", "dooory-website-blocker-title");
+
+  const dialog = document.createElement('dialog');
+  dialog.id = 'dooory-website-blocker-dialog';
+  dialog.setAttribute('aria-labelledby', 'dooory-website-blocker-title');
   dialog.innerHTML = `<h2 id="dooory-website-blocker-title">Blocked websites</h2>
     <form><label for="dooory-website-blocker-input">Domain or website URL</label>
     <div class="entry"><input id="dooory-website-blocker-input" required maxlength="2048" placeholder="youtube.com" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="submit">Block site</button></div>
     <p>Blocks the whole domain and its subdomains, across windows and Web Panels. Paths and ports do not narrow the rule. Existing tabs will redirect immediately.</p></form>
     <p class="status" role="status" aria-live="polite"></p><ul aria-label="Blocked domains"></ul>
     <button type="button" class="close">Done</button>`;
-  const input = dialog.querySelector("input");
-  const form = dialog.querySelector("form");
+
+  const input = dialog.querySelector('input');
+  const form = dialog.querySelector('form');
   const submit = dialog.querySelector('[type="submit"]');
-  const status = dialog.querySelector(".status");
-  const list = dialog.querySelector("ul");
+  const status = dialog.querySelector('.status');
+  const list = dialog.querySelector('ul');
 
-  function report(message) {
+  const report = function report(message) {
     status.textContent = message;
-  }
+  };
 
-  function render() {
+  const render = function render() {
     list.replaceChildren();
     if (!domains.size) {
-      const empty = document.createElement("li");
-      empty.textContent = "No sites blocked.";
+      const empty = document.createElement('li');
+      empty.textContent = 'No sites blocked.';
       list.append(empty);
     }
-    for (const domain of [...domains].sort()) {
-      const row = document.createElement("li");
-      const name = document.createElement("span");
+
+    [...domains].sort().forEach((domain) => {
+      const row = document.createElement('li');
+      const name = document.createElement('span');
       name.textContent = domain;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.textContent = "Remove";
-      remove.setAttribute("aria-label", `Unblock ${domain}`);
-      remove.addEventListener("click", async () => {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', `Unblock ${domain}`);
+
+      remove.addEventListener('click', async () => {
         remove.disabled = true;
         try {
-          await call(chrome.storage.local, "remove", PREFIX + domain);
+          await call(chrome.storage.local, 'remove', `${PREFIX}${domain}`);
           domains.delete(domain);
           render();
           report(`${domain} unblocked. Navigate to the site again to open it.`);
@@ -113,71 +152,98 @@
           remove.disabled = false;
         }
       });
+
       row.append(name, remove);
       list.append(row);
-    }
-    submit.disabled = !ready;
-  }
+    });
 
-  function confirmBlock(tabId, address) {
+    submit.disabled = !ready;
+  };
+
+  const confirmBlock = function confirmBlock(tabId, address) {
     const block = pendingBlocks.get(tabId);
-    if (!block || address !== block.url) return;
+    if (!block || address !== block.url) {
+      return;
+    }
+
     pendingBlocks.delete(tabId);
     console.log(`[Website blocker] Blocked ${block.domain} in tab ${tabId}.`);
-  }
+  };
 
-  async function enforce(tab, address = tab.pendingUrl || tab.url) {
-    if (!ready || tab.windowId !== ownWindowId() || !Number.isInteger(tab.id) || tab.id < 0 || redirecting.has(tab.id)) return;
-    const domain = matchingDomain(address, domains);
-    if (!domain) return;
-    const url = blockedPage(domain);
-    pendingBlocks.set(tab.id, { domain, url });
-    redirecting.add(tab.id);
-    try {
-      // shortcut: tab redirects can follow network requests; use an extension for request-level blocking.
-      await call(chrome.tabs, "update", tab.id, { url });
-    } catch (error) {
-      pendingBlocks.delete(tab.id);
-      report(`Could not redirect a blocked tab: ${error.message}`);
-      console.error("Website blocker could not redirect a tab:", error);
-    } finally {
-      redirecting.delete(tab.id);
+  const enforce = async function enforce(tab, address = tab.pendingUrl || tab.url) {
+    const { id, windowId: tabWindowId } = tab;
+    if (
+      !ready
+      || tabWindowId !== ownWindowId()
+      || !Number.isInteger(id)
+      || id < 0
+      || redirecting.has(id)
+    ) {
+      return;
     }
-  }
 
-  async function enforceAll() {
+    const domain = matchingDomain(address, domains);
+    if (!domain) {
+      return;
+    }
+
+    const url = blockedPage(domain);
+    pendingBlocks.set(id, { domain, url });
+    redirecting.add(id);
     try {
-      const tabs = await call(chrome.tabs, "query", { windowId: ownWindowId() });
-      await Promise.all(tabs.map(tab => enforce(tab)));
+      // shortcut: redirects can follow requests; use an extension for request-level blocking.
+      await call(chrome.tabs, 'update', id, { url });
+    } catch (error) {
+      pendingBlocks.delete(id);
+      report(`Could not redirect a blocked tab: ${error.message}`);
+      console.error('Website blocker could not redirect a tab:', error);
+    } finally {
+      redirecting.delete(id);
+    }
+  };
+
+  const enforceAll = async function enforceAll() {
+    try {
+      const tabs = await call(chrome.tabs, 'query', { windowId: ownWindowId() });
+      await Promise.all(tabs.map((tab) => enforce(tab)));
     } catch (error) {
       report(`Could not check open tabs: ${error.message}`);
-      console.error("Website blocker could not check tabs:", error);
+      console.error('Website blocker could not check tabs:', error);
     }
-  }
+  };
 
-  async function enforceNavigation(details) {
-    if (!ready || details.frameId !== 0) return;
-    confirmBlock(details.tabId, details.url);
-    if (!matchingDomain(details.url, domains)) return;
+  const enforceNavigation = async function enforceNavigation(details) {
+    const { frameId, tabId, url } = details;
+    if (!ready || frameId !== 0) {
+      return;
+    }
+
+    confirmBlock(tabId, url);
+    if (!matchingDomain(url, domains)) {
+      return;
+    }
+
     try {
-      const tab = await call(chrome.tabs, "get", details.tabId);
-      await enforce(tab, details.url);
+      const tab = await call(chrome.tabs, 'get', tabId);
+      await enforce(tab, url);
     } catch (error) {
       report(`Could not check navigation: ${error.message}`);
-      console.error("Website blocker could not check navigation:", error);
+      console.error('Website blocker could not check navigation:', error);
     }
-  }
+  };
 
-  form.addEventListener("submit", async event => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!ready) return;
-    let domain;
+    if (!ready) {
+      return;
+    }
+
     try {
-      domain = normalizeDomain(input.value);
+      const domain = normalizeDomain(input.value);
       submit.disabled = true;
-      await call(chrome.storage.local, "set", { [PREFIX + domain]: true });
+      await call(chrome.storage.local, 'set', { [`${PREFIX}${domain}`]: true });
       domains.add(domain);
-      input.value = "";
+      input.value = '';
       render();
       report(`${domain} blocked, including its subdomains.`);
       await enforceAll();
@@ -188,31 +254,51 @@
       input.focus();
     }
   });
-  dialog.querySelector(".close").addEventListener("click", () => dialog.close());
 
-  function mount() {
-    if (!document.body) return;
-    if (!dialog.isConnected) document.body.append(dialog);
-    const toolbar = document.querySelector(".toolbar-mainbar.toolbar-addressbar");
-    if (!toolbar || toolbar.querySelector("#dooory-website-blocker-button")) return;
-    const wrapper = document.createElement("div");
-    wrapper.className = "button-toolbar";
-    wrapper.id = "dooory-website-blocker-button";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.title = "Manage blocked websites";
-    button.setAttribute("aria-haspopup", "dialog");
-    button.textContent = "Block sites";
-    button.addEventListener("click", () => {
-      if (!ready) report(startupError || "Loading saved rules…");
-      if (!dialog.open) dialog.showModal();
+  dialog.querySelector('.close').addEventListener('click', () => {
+    dialog.close();
+  });
+
+  const mount = function mount() {
+    if (!document.body) {
+      return;
+    }
+
+    if (!dialog.isConnected) {
+      document.body.append(dialog);
+    }
+
+    const toolbar = document.querySelector('.toolbar-mainbar.toolbar-addressbar');
+    if (!toolbar || toolbar.querySelector('#dooory-website-blocker-button')) {
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'button-toolbar';
+    wrapper.id = 'dooory-website-blocker-button';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Manage blocked websites';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.textContent = 'Block sites';
+
+    button.addEventListener('click', () => {
+      if (!ready) {
+        report(startupError || 'Loading saved rules…');
+      }
+
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+
       input.focus();
     });
+
     wrapper.append(button);
     toolbar.append(wrapper);
-  }
+  };
 
-  const style = document.createElement("style");
+  const style = document.createElement('style');
   style.textContent = `
     #dooory-website-blocker-button button{padding:0 10px;white-space:nowrap}
     #dooory-website-blocker-dialog{color-scheme:light dark;box-sizing:border-box;width:min(480px,calc(100vw - 32px));max-height:85vh;overflow:auto;padding:24px;border:1px solid #8888;border-radius:12px;background:var(--colorBg,#fff);color:var(--colorFg,#222);font:14px/1.5 system-ui,sans-serif}
@@ -229,60 +315,113 @@
     #dooory-website-blocker-dialog .status{min-height:1.5em}
     #dooory-website-blocker-dialog .close{float:right}`;
   document.head.append(style);
+
   render();
+
   new MutationObserver(mount).observe(document.documentElement, { childList: true, subtree: true });
+
   mount();
 
-  async function start() {
+  const start = async function start() {
     try {
       // Vivaldi's UI window can differ from the window reported by getCurrent during startup.
-      windowId = window.vivaldiWindowId ?? (await call(chrome.windows, "getCurrent")).id;
-      // Each domain has its own key, so simultaneous edits in different windows do not replace the list.
-      const saved = await call(chrome.storage.local, "get", null);
-      for (const [key, value] of Object.entries(saved)) {
-        if (!key.startsWith(PREFIX) || value !== true) continue;
+      windowId = window.vivaldiWindowId ?? (await call(chrome.windows, 'getCurrent')).id;
+
+      // Per-domain keys keep edits in different windows from replacing the list.
+      const saved = await call(chrome.storage.local, 'get', null);
+      Object.entries(saved).forEach(([key, value]) => {
+        if (!key.startsWith(PREFIX) || value !== true) {
+          return;
+        }
+
         const domain = key.slice(PREFIX.length);
         try {
-          if (normalizeDomain(domain) === domain) domains.add(domain);
-        } catch { /* Ignore malformed saved rules. */ }
-      }
+          if (normalizeDomain(domain) === domain) {
+            domains.add(domain);
+          }
+        } catch {
+          // Ignore malformed saved rules.
+        }
+      });
+
       chrome.storage.onChanged.addListener((changes, area) => {
-        if (area !== "local") return;
+        if (area !== 'local') {
+          return;
+        }
+
         let changed = false;
-        for (const [key, change] of Object.entries(changes)) {
-          if (!key.startsWith(PREFIX)) continue;
+        Object.entries(changes).forEach(([key, change]) => {
+          if (!key.startsWith(PREFIX)) {
+            return;
+          }
+
           const domain = key.slice(PREFIX.length);
           try {
-            if (normalizeDomain(domain) !== domain) continue;
-          } catch { continue; }
-          if (change.newValue === true) domains.add(domain);
-          else domains.delete(domain);
+            if (normalizeDomain(domain) !== domain) {
+              return;
+            }
+          } catch {
+            return;
+          }
+
+          if (change.newValue === true) {
+            domains.add(domain);
+          } else {
+            domains.delete(domain);
+          }
+
           changed = true;
-        }
+        });
+
         if (changed) {
           render();
-          void enforceAll();
+          enforceAll();
         }
       });
-      chrome.tabs.onCreated.addListener(tab => { void enforce(tab); });
+
+      chrome.tabs.onCreated.addListener((tab) => {
+        enforce(tab);
+      });
+
       chrome.tabs.onUpdated.addListener((id, changes, tab) => {
-        if (changes.status === "complete") confirmBlock(id, tab.url);
-        if (changes.url || changes.status === "complete") void enforce(tab, changes.url || tab.pendingUrl || tab.url);
+        const { status: tabStatus, url } = changes;
+        if (tabStatus === 'complete') {
+          confirmBlock(id, tab.url);
+        }
+
+        if (url || tabStatus === 'complete') {
+          enforce(tab, url || tab.pendingUrl || tab.url);
+        }
       });
-      chrome.tabs.onRemoved.addListener(id => pendingBlocks.delete(id));
+
+      chrome.tabs.onRemoved.addListener((id) => {
+        pendingBlocks.delete(id);
+      });
+
       chrome.webNavigation.onCommitted.addListener(enforceNavigation);
+
       chrome.webNavigation.onCompleted.addListener(enforceNavigation);
-      chrome.webNavigation.onErrorOccurred.addListener(details => {
-        const block = pendingBlocks.get(details.tabId);
-        if (details.frameId !== 0 || !block || details.url !== block.url) return;
-        pendingBlocks.delete(details.tabId);
-        report(`Could not load the blocked page: ${details.error}`);
-        console.error(`[Website blocker] Could not load the blocked page for ${block.domain}: ${details.error}`);
+
+      chrome.webNavigation.onErrorOccurred.addListener((details) => {
+        const { tabId, frameId, url, error } = details;
+        const block = pendingBlocks.get(tabId);
+        if (frameId !== 0 || !block || url !== block.url) {
+          return;
+        }
+
+        pendingBlocks.delete(tabId);
+        report(`Could not load the blocked page: ${error}`);
+        console.error(`[Website blocker] Could not load the blocked page for ${block.domain}: ${error}`);
       });
-      chrome.tabs.onReplaced.addListener(async id => {
-        try { await enforce(await call(chrome.tabs, "get", id)); }
-        catch (error) { console.error("Website blocker could not check a replaced tab:", error); }
+
+      chrome.tabs.onReplaced.addListener(async (id) => {
+        try {
+          await enforce(await call(chrome.tabs, 'get', id));
+        } catch (error) {
+          console.error('Website blocker could not check a replaced tab:', error);
+        }
       });
+
       ready = true;
       render();
       await enforceAll();
@@ -291,6 +430,7 @@
       report(startupError);
       console.error(startupError);
     }
-  }
-  void start();
+  };
+
+  start();
 })();
