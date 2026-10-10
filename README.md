@@ -10,29 +10,33 @@ The mod applies the same list to normal windows, private windows, and Web Panels
 
 ## Install
 
-### Automatic installation on Windows
+### Repair-and-launch shortcut on Windows
 
 Keep all the repository files in a permanent folder. Open PowerShell in that folder and run:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -EnableAutoUpdate
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CreateShortcut
 ```
 
-This installs both mod files, adds the script tag, and registers a hidden Windows scheduled task named **Vivaldi Website Blocker**. The task runs at sign-in and every minute while you are signed in, reapplying the mod to the newest installed Vivaldi version. It uses the files in this folder and does not download anything.
+This creates a Desktop shortcut named **Vivaldi Website Blocker** and replaces your user Start menu shortcut named **Vivaldi**, so opening that result from Windows search also repairs the blocker. Open Vivaldi through either shortcut to install or repair both mod files and the script tag before the browser starts. It uses the files in this folder, does not download anything, and creates no scheduled task or background watcher. If repair fails, it shows an error and does not open Vivaldi.
 
-The installer preserves other modifications to `window.html`, adds the script tag only when missing, and creates `window.html.website-blocker.bak` before its first edit. It copies mod files only when they differ. It does not close or restart Vivaldi. If an update opens Vivaldi before the task reapplies the mod, wait a minute and restart Vivaldi once more.
+Setup saves the original Start menu shortcut as `Vivaldi.lnk.website-blocker.bak` beside it before the first replacement. If a Vivaldi update replaces the shortcut, rerun setup.
 
-The default installation path is `%LOCALAPPDATA%\Vivaldi\Application`. For a different installation, add `-ApplicationPath 'D:\Vivaldi\Application'`. Writing a system-wide installation may require an administrator; the automatic task uses your normal account permissions.
+The installer preserves other modifications to `window.html`, adds the script tag only when missing, and creates `window.html.website-blocker.bak` before its first edit. It copies mod files only when they differ. It does not close or restart an already-running Vivaldi. Fully quit the browser and reopen through the shortcut to load repaired files.
 
-To install once without scheduling, omit `-EnableAutoUpdate`. If you move this folder, run the command again from its new location to update the task.
+Other browser shortcuts, existing taskbar pins, web links, and updater restarts can bypass repair. An update can also install new resources during startup after the repair has run. If the blocker is missing after an update, fully quit Vivaldi and open it through a repair shortcut again.
 
-To stop automatic reinstallation, run:
+The default installation path is `%LOCALAPPDATA%\Vivaldi\Application`. For a different installation, add `-ApplicationPath 'D:\Vivaldi\Application'`. Writing a system-wide installation may require an administrator; the shortcut uses your normal account permissions.
+
+To install once without changing shortcuts or launching Vivaldi, omit `-CreateShortcut`. If you move this folder, run the command again from its new location to update both shortcuts. `-EnableAutoUpdate` remains an alias for `-CreateShortcut` for older setup commands.
+
+Existing scheduled tasks are left untouched. If you previously enabled the every-minute task, it continues to run. To remove it yourself, run:
 
 ```powershell
 Unregister-ScheduledTask -TaskName 'Vivaldi Website Blocker' -Confirm:$false
 ```
 
-Disable the task before manually uninstalling the mod, or it will reinstall it. Installation errors are available through the task's **Last Run Result** in Windows Task Scheduler; run `install.ps1` manually to see the error message.
+Before manually uninstalling the mod, delete the Desktop shortcut, restore the original Start menu shortcut, and disable any old task, or they will reinstall it. To restore the Start menu shortcut, open `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, delete `Vivaldi.lnk`, and rename `Vivaldi.lnk.website-blocker.bak` to `Vivaldi.lnk`. If no backup exists, delete the repair shortcut and create a normal shortcut to `vivaldi.exe`. Run `install.ps1` manually to see installation errors in PowerShell.
 
 ### Manual installation
 

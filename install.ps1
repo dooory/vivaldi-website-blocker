@@ -1,14 +1,47 @@
 [CmdletBinding()]
 param(
     [string]$ApplicationPath = (Join-Path $env:LOCALAPPDATA 'Vivaldi\Application'),
-    [switch]$EnableAutoUpdate
+    [Alias('EnableAutoUpdate')]
+    [switch]$CreateShortcut,
+    [switch]$Launch
 )
 
 $ErrorActionPreference = 'Stop'
-$taskName = 'Vivaldi Website Blocker'
 
 try {
     $ApplicationPath = (Resolve-Path -LiteralPath $ApplicationPath).Path
+    $vivaldi = Join-Path $ApplicationPath 'vivaldi.exe'
+    if (($CreateShortcut -or $Launch) -and
+        -not (Test-Path -LiteralPath $vivaldi -PathType Leaf)) {
+        throw "Vivaldi executable not found at $vivaldi."
+    }
+
+    if ($CreateShortcut) {
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $startMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Vivaldi.lnk'
+        $shortcutBackup = "$startMenuShortcut.website-blocker.bak"
+        if ((Test-Path -LiteralPath $startMenuShortcut -PathType Leaf) -and
+            -not (Test-Path -LiteralPath $shortcutBackup)) {
+            Copy-Item -LiteralPath $startMenuShortcut -Destination $shortcutBackup
+        }
+
+        $shell = New-Object -ComObject WScript.Shell
+        foreach ($shortcutPath in @((Join-Path $desktop 'Vivaldi Website Blocker.lnk'), $startMenuShortcut)) {
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = $powershell
+            # shortcut: the launcher uses this folder; rerun -CreateShortcut after moving it.
+            $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Launch -ApplicationPath "{1}"' -f $PSCommandPath, $ApplicationPath
+            $shortcut.WorkingDirectory = $PSScriptRoot
+            $shortcut.IconLocation = "$vivaldi,0"
+            $shortcut.Description = 'Repair the local website blocker, then open Vivaldi.'
+            $shortcut.Save()
+        }
+
+        Write-Output 'Desktop and Vivaldi Start menu shortcuts updated. Existing scheduled tasks are unchanged.'
+        return
+    }
+
     $modFiles = @('website-blocker-blocked.html', 'website-blocker.js')
     foreach ($name in $modFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name) -PathType Leaf)) {
@@ -62,24 +95,15 @@ try {
     }
     Write-Output "Website blocker installed for Vivaldi $($version.Name). Restart Vivaldi to load changes."
 
-    if ($EnableAutoUpdate) {
-        $account = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        # shortcut: the task runs from this folder; rerun -EnableAutoUpdate after moving it.
-        $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -ApplicationPath "{1}"' -f $PSCommandPath, $ApplicationPath
-        $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments
-        $triggers = @(
-            (New-ScheduledTaskTrigger -AtLogOn -User $account),
-            (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
-        )
-        $principal = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Limited
-        $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew `
-            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal `
-            -Settings $settings -Description 'Reapply the local website blocker after Vivaldi updates. Does not download files or restart the browser.' -Force | Out-Null
-        Write-Output "Automatic reinstallation enabled: $taskName. Keep this project folder in place."
+    if ($Launch) {
+        Start-Process -FilePath $vivaldi
     }
 } catch {
-    Write-Error $_
+    if ($Launch) {
+        $shell = New-Object -ComObject WScript.Shell
+        $shell.Popup("Vivaldi was not opened.`n`n$($_.Exception.Message)", 0, 'Vivaldi Website Blocker', 16) | Out-Null
+    }
+
+    Write-Error $_ -ErrorAction Continue
     exit 1
 }
