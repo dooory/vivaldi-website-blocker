@@ -18,17 +18,10 @@ try {
 
     if ($CreateShortcut) {
         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        $startMenuShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Vivaldi.lnk'
-        $shortcutBackup = "$startMenuShortcut.website-blocker.bak"
-        if ((Test-Path -LiteralPath $startMenuShortcut -PathType Leaf) -and
-            -not (Test-Path -LiteralPath $shortcutBackup)) {
-            Copy-Item -LiteralPath $startMenuShortcut -Destination $shortcutBackup
-        }
-
+        $startMenu = [Environment]::GetFolderPath('Programs')
         $shell = New-Object -ComObject WScript.Shell
-        foreach ($shortcutPath in @((Join-Path $desktop 'Vivaldi Website Blocker.lnk'), $startMenuShortcut)) {
-            $shortcut = $shell.CreateShortcut($shortcutPath)
+        foreach ($folder in @([Environment]::GetFolderPath('Desktop'), $startMenu)) {
+            $shortcut = $shell.CreateShortcut((Join-Path $folder 'Vivaldi Website Blocker.lnk'))
             $shortcut.TargetPath = $powershell
             # shortcut: the launcher uses this folder; rerun -CreateShortcut after moving it.
             $shortcut.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Launch -ApplicationPath "{1}"' -f $PSCommandPath, $ApplicationPath
@@ -38,7 +31,29 @@ try {
             $shortcut.Save()
         }
 
-        Write-Output 'Desktop and Vivaldi Start menu shortcuts updated. Existing scheduled tasks are unchanged.'
+        # Older setups replaced Vivaldi.lnk. Vivaldi updates reset its target but keep the launcher
+        # arguments, which then open as tabs, so restore it to a plain Vivaldi shortcut.
+        $vivaldiShortcutPath = Join-Path $startMenu 'Vivaldi.lnk'
+        $vivaldiShortcutBackup = "$vivaldiShortcutPath.website-blocker.bak"
+        if (Test-Path -LiteralPath $vivaldiShortcutPath -PathType Leaf) {
+            $vivaldiShortcut = $shell.CreateShortcut($vivaldiShortcutPath)
+            if ($vivaldiShortcut.Arguments -like '*install.ps1*-Launch*') {
+                if (Test-Path -LiteralPath $vivaldiShortcutBackup -PathType Leaf) {
+                    Move-Item -LiteralPath $vivaldiShortcutBackup -Destination $vivaldiShortcutPath -Force
+                } else {
+                    $vivaldiShortcut.TargetPath = $vivaldi
+                    $vivaldiShortcut.Arguments = ''
+                    $vivaldiShortcut.WorkingDirectory = $ApplicationPath
+                    $vivaldiShortcut.IconLocation = "$vivaldi,0"
+                    $vivaldiShortcut.Description = 'Vivaldi'
+                    $vivaldiShortcut.Save()
+                }
+
+                Write-Output 'Restored the Vivaldi Start menu shortcut.'
+            }
+        }
+
+        Write-Output 'Desktop and Start menu Vivaldi Website Blocker shortcuts updated. Existing scheduled tasks are unchanged.'
         return
     }
 
